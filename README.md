@@ -22,7 +22,7 @@ jail:
 | Metric | Scope |
 |---|---|
 | CPU, load, memory | host (all tenants) |
-| TCP/UDP connection counts | host |
+| TCP/UDP connection counts | whatever the jail can see (usually a small subset; the host's table is closed to jails) |
 | Network traffic counters | host, by default — see `--iface` |
 | Disk | the jail's visible mounts |
 | Process count | the jail's own |
