@@ -23,6 +23,11 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 # collection layer has no other native dependency.
 libc = "0.2"
 
+[dev-dependencies]
+# Only the tests need a movable clock; the write-deadline arithmetic spans
+# minutes. dev-dependencies do not reach the shipped binary.
+tokio = { version = "1", features = ["test-util"] }
+
 [profile.release]
 codegen-units = 1
 lto = true
