@@ -312,7 +312,7 @@ pub fn sysctl_string(name: &str) -> Option<String> {
 /// MIB with the natural-width type the caller states.
 pub fn sysctl_u64(name: &str) -> Option<u64> {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len();
+    let mut miblen = mib.len() as libc::u_int;
     let c = std::ffi::CString::new(name).ok()?;
     if unsafe { libc::sysctlnametomib(c.as_ptr(), mib.as_mut_ptr(), &mut miblen) } != 0 {
         return None;
@@ -337,7 +337,7 @@ const CTL_MAXNAME: usize = 24;
 /// order; idle is index 4. Everything else is work the machine did.
 fn cpu_times() -> Option<(u64, u64)> {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len();
+    let mut miblen = mib.len() as libc::u_int;
     let c = std::ffi::CString::new("kern.cp_times").ok()?;
     if unsafe { libc::sysctlnametomib(c.as_ptr(), mib.as_mut_ptr(), &mut miblen) } != 0 {
         return None;
@@ -392,7 +392,7 @@ fn loadavg() -> [f32; 3] {
         scale: u32,
     }
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len();
+    let mut miblen = mib.len() as libc::u_int;
     let c = match std::ffi::CString::new("vm.loadavg") {
         Ok(c) => c,
         Err(_) => return [0.0; 3],
@@ -423,7 +423,7 @@ fn sysctl_boottime_secs() -> Option<u64> {
         usec: i64,
     }
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len();
+    let mut miblen = mib.len() as libc::u_int;
     let c = std::ffi::CString::new("kern.boottime").ok()?;
     if unsafe { libc::sysctlnametomib(c.as_ptr(), mib.as_mut_ptr(), &mut miblen) } != 0 {
         return None;
@@ -479,7 +479,7 @@ fn memory() -> (u64, u64) {
 /// devices gives totals in 512-byte DEV_BSIZE blocks.
 fn swap() -> (u64, u64) {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len();
+    let mut miblen = mib.len() as libc::u_int;
     let c = match std::ffi::CString::new("vm.swap_info") {
         Ok(c) => c,
         Err(_) => return (0, 0),
@@ -506,8 +506,7 @@ fn swap() -> (u64, u64) {
         let mut len = std::mem::size_of::<XswDev>();
         let rc = unsafe {
             libc::sysctl(dev_mib.as_ptr(), miblen + 1, (&mut xsw as *mut XswDev).cast(), &mut len, std::ptr::null_mut(), 0)
-        };
-        if rc != 0 {
+        };        if rc != 0 {
             break;
         }
         // XSWDEV_VERSION guards against a struct the kernel fills differently.
@@ -534,7 +533,7 @@ fn real_mount_points() -> Vec<String> {
     // to grow the buffer, which no serv00 jail reaches.
     let statfs_size = std::mem::size_of::<libc::statfs>();
     let mut buf = vec![0u8; statfs_size * 256];
-    let n = unsafe { libc::getfsstat(buf.as_mut_ptr().cast(), buf.len() as libc::c_int, libc::MNT_WAIT) };
+    let n = unsafe { libc::getfsstat(buf.as_mut_ptr().cast(), buf.len() as libc::c_long, libc::MNT_WAIT) };
     if n <= 0 {
         return Vec::new();
     }
@@ -572,7 +571,7 @@ fn real_mount_points() -> Vec<String> {
     out
 }
 
-fn f2s(f: &[libc::c_char; 1024]) -> String {
+fn f2s(f: &[libc::c_char]) -> String {
     let bytes: Vec<u8> = f.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
     String::from_utf8_lossy(&bytes).into_owned()
 }
@@ -628,43 +627,30 @@ fn if_counters() -> Vec<(String, u64, u64)> {
             let data = unsafe { &*(ifa.ifa_data as *const IfData64) };
             out.push((name, data.ibytes, data.obytes));
         }
-        cursor = unsafe { ifa.ifa_next };
+        cursor = ifa.ifa_next;
     }
     unsafe { libc::freeifaddrs(addrs) };
     out
 }
 
-/// The layout of `struct if_data64` (net/if.h) as FreeBSD lays it out:
-/// u_char x 8, then the u64 counters, 18 of them. Only the two we read are
-/// named; the rest are padding walked by size so the cast stays in bounds.
+/// The layout of `struct if_data64` (net/if.h): u_char x 8, then 21 u64
+/// counters. Only the two we read are named; the rest are padding walked by
+/// size so the cast stays in bounds. The const assertion pins the total.
 #[repr(C)]
 struct IfData64 {
-    _type: u8,
-    _physical: u8,
-    _addrlen: u8,
-    _hdrlen: u8,
-    _received: u8,
-    _sent: u8,
-    _oqueue: u8,
-    _collisions: u8,
+    typ: u8,
+    physical: u8,
+    addrlen: u8,
+    hdrlen: u8,
+    received: u8,
+    sent: u8,
+    oqueue: u8,
+    collisions: u8,
     ibytes: u64,
     obytes: u64,
-    _ifi_ipackets: u64,
-    _ifi_opackets: u64,
-    _ifi_ierrors: u64,
-    _ifi_oerrors: u64,
-    _ifi_iqdrops: u64,
-    _ifi_oqdrops: u64,
-    _ifi_imcasts: u64,
-    _ifi_omcasts: u64,
-    _ifi_iqdrops_nobuf: u64,
-    _ifi_baudrate: u64,
-    _ifi_hwassist: u64,
-    _ifi_epoch: u64,
-    // FreeBSD 14 struct if_data64 has 21 u64 fields after the header bytes;
-    // the last three keep the size honest even if a future field is added,
-    // which the size assertion in the tests pins.
-    _pad: [u64; 11],
+    // 19 more u64 fields follow in the kernel struct (packets, errors, drops,
+    // multicasts, baudrate, epoch, hwassist, ...); they are not read.
+    rest: [u64; 19],
 }
 
 const _: () = {
@@ -709,7 +695,7 @@ fn addresses() -> (String, String) {
                 }
             }
         }
-        cursor = unsafe { ifa.ifa_next };
+        cursor = ifa.ifa_next;
     }
     unsafe { libc::freeifaddrs(addrs) };
     pick(&held)
@@ -763,7 +749,7 @@ fn conn_counts() -> (u32, u32) {
 
 fn inpcb_count(name: &str) -> u32 {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len();
+    let mut miblen = mib.len() as libc::u_int;
     let c = match std::ffi::CString::new(name) {
         Ok(c) => c,
         Err(_) => return 0,
@@ -803,7 +789,7 @@ fn inpcb_count(name: &str) -> u32 {
 /// Processes visible to this jail, from `kern.proc.all` -- a buffer of
 /// kinfo_proc records, again self-described by ki_structsize.
 fn proc_count() -> u32 {
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_ALL];
+    let mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_ALL];
     let mut len = 0usize;
     if unsafe { libc::sysctl(mib.as_ptr(), 3, std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) } != 0
         || len == 0
