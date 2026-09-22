@@ -631,17 +631,18 @@ mod tests {
         );
     }
 
-    /// A listener whose accept queue is full drops further SYNs rather than
-    /// refusing them: a black hole on loopback. The clock is paused, so the
-    /// fallback deadline elapses as soon as nothing else can progress, while
-    /// without it the connect would wait out the kernel's SYN retries.
+    /// A dead address gives way to the live one within the fallback. On
+    /// Linux the dead address is a listener with a full accept queue, which
+    /// drops SYNs; FreeBSD accepts the one queued connection even at backlog
+    /// zero, so an unroutable address stands in for the black hole instead.
+    /// The clock is paused, so the fallback deadline elapses as soon as
+    /// nothing else can progress.
     #[tokio::test(start_paused = true)]
     async fn a_black_holed_address_gives_way_to_the_next_within_the_fallback() {
-        let hole = tokio::net::TcpSocket::new_v4().unwrap();
-        hole.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-        let hole = hole.listen(0).unwrap();
-        let dead = hole.local_addr().unwrap();
-        let _queued = std::net::TcpStream::connect(dead).unwrap();
+        // 203.0.113.0/24 is TEST-NET-3: routed nowhere, refused by nothing on
+        // this host. The connect can only time out, which is the black-hole
+        // behaviour the fallback bounds.
+        let dead: std::net::SocketAddr = "203.0.113.10:28080".parse().unwrap();
         let live = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let live = live.local_addr().unwrap();
 
