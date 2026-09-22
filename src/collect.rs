@@ -9,7 +9,7 @@
 //! invisible from a jail; a failed reading reports zero rather than guessing.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::IpAddr;
 use std::time::Instant;
 
 use serde::Serialize;
@@ -186,7 +186,14 @@ impl Collector {
 
     /// The interfaces the traffic totals include at this moment.
     pub fn counted_ifaces(&self) -> Vec<String> {
-        if_counters().into_iter().map(|(name, ..)| name).collect()
+        raw_if_counters().into_iter().filter(|(name, ..)| self.ifaces.counts(name)).map(|(name, ..)| name).collect()
+    }
+
+    /// `(name, rx, tx)` of the counted interfaces, freshly read. Same filter
+    /// as [`Self::counted_ifaces`] — a drift between the two would make the
+    /// startup log name interfaces the totals then ignore.
+    fn counted(&self) -> Vec<(String, u64, u64)> {
+        raw_if_counters().into_iter().filter(|(name, ..)| self.ifaces.counts(name)).collect()
     }
 
     pub fn facts(&self) -> Facts {
@@ -215,7 +222,7 @@ impl Collector {
         let (mem_total, mem_used) = memory();
         let (swap_total, swap_used) = swap();
         let (disk_total, disk_used) = disk_usage(&real_mount_points());
-        let counted = if_counters();
+        let counted = self.counted();
         let (rx_total, tx_total) = totals(&counted);
         let boot_time = sysctl_boottime_secs().unwrap_or(0);
         let boot_id = epoch(boot_time, counted.iter().map(|(name, ..)| name.clone()));
@@ -607,12 +614,13 @@ fn skip_fstype(fstype: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `(name, rx bytes, tx bytes)` for every interface with data counters, from
-/// getifaddrs(3). FreeBSD attaches a `struct if_data64` to each AF_LINK
-/// address record; ifi_ibytes/ifi_obytes are the kernel's lifetime counters.
+/// getifaddrs(3), unfiltered. FreeBSD attaches a `struct if_data64` to each
+/// AF_LINK address record; ifi_ibytes/ifi_obytes are the kernel's lifetime
+/// counters.
 ///
 /// In a non-VNET jail the list is the host's: the counters are host-wide
 /// traffic. Reported as such by design.
-fn if_counters() -> Vec<(String, u64, u64)> {
+fn raw_if_counters() -> Vec<(String, u64, u64)> {
     let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
     if unsafe { libc::getifaddrs(&mut addrs) } != 0 {
         return Vec::new();
