@@ -295,17 +295,20 @@ impl Collector {
 // sysctl plumbing
 // ---------------------------------------------------------------------------
 
-/// One string sysctl. `kern.hostname`, `kern.osrelease` and friends all answer
-/// with a NUL-terminated byte string.
+/// One string sysctl, read straight by name. `sysctlbyname` answers a
+/// NUL-terminated byte string for the names this agent asks; walking the MIB
+/// instead would hand back the MIB integers themselves.
 pub fn sysctl_string(name: &str) -> Option<String> {
     let c = std::ffi::CString::new(name).ok()?;
     let mut len = 0usize;
     // A NULL buffer asks only for the size.
-    if unsafe { libc::sysctlnametomib(c.as_ptr(), std::ptr::null_mut(), &mut len) } != 0 {
+    if unsafe { libc::sysctlbyname(c.as_ptr(), std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) } != 0
+        || len == 0
+    {
         return None;
     }
     let mut buf = vec![0u8; len];
-    if unsafe { libc::sysctlnametomib(c.as_ptr(), buf.as_mut_ptr().cast(), &mut len) } != 0 {
+    if unsafe { libc::sysctlbyname(c.as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return None;
     }
     while buf.last() == Some(&0) {
@@ -534,6 +537,10 @@ fn swap() -> (u64, u64) {
 /// `getfsstat(2)` returns every mounted filesystem with its `struct statfs`.
 /// This agent does not parse a text table: it asks the kernel directly, which
 /// inside a jail answers with exactly the mounts visible to it.
+///
+/// Some jails (serv00 among them) hide the mount table entirely -- the call
+/// returns nothing where `df(1)` still works. The jail's root then stands in:
+/// one real filesystem is better than reporting zero capacity.
 fn real_mount_points() -> Vec<String> {
     // A generous buffer: 256 mounts covers any jail. The call names how many
     // it filled; a truncated answer (a negative return is ENOMEM) would have
@@ -542,7 +549,7 @@ fn real_mount_points() -> Vec<String> {
     let mut buf = vec![0u8; statfs_size * 256];
     let n = unsafe { libc::getfsstat(buf.as_mut_ptr().cast(), buf.len() as libc::c_long, libc::MNT_WAIT) };
     if n <= 0 {
-        return Vec::new();
+        return vec!["/".to_owned()];
     }
     let rows: &[libc::statfs] = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), n as usize) };
     let mut seen = Vec::new();
