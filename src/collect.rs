@@ -312,14 +312,14 @@ pub fn sysctl_string(name: &str) -> Option<String> {
 /// MIB with the natural-width type the caller states.
 pub fn sysctl_u64(name: &str) -> Option<u64> {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len() as libc::u_int;
+    let mut miblen = mib.len();
     let c = std::ffi::CString::new(name).ok()?;
     if unsafe { libc::sysctlnametomib(c.as_ptr(), mib.as_mut_ptr(), &mut miblen) } != 0 {
         return None;
     }
     let mut value: libc::c_long = 0;
     let mut len = std::mem::size_of::<libc::c_long>();
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen, (&mut value as *mut libc::c_long).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, (&mut value as *mut libc::c_long).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return None;
     }
     Some(u64::try_from(value).unwrap_or(0))
@@ -337,14 +337,14 @@ const CTL_MAXNAME: usize = 24;
 /// order; idle is index 4. Everything else is work the machine did.
 fn cpu_times() -> Option<(u64, u64)> {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len() as libc::u_int;
+    let mut miblen = mib.len();
     let c = std::ffi::CString::new("kern.cp_times").ok()?;
     if unsafe { libc::sysctlnametomib(c.as_ptr(), mib.as_mut_ptr(), &mut miblen) } != 0 {
         return None;
     }
     // Ask for the size first: ncpu * CPUSTATES longs.
     let mut len = 0usize;
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen, std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return None;
     }
     let n = len / std::mem::size_of::<libc::c_long>();
@@ -352,7 +352,7 @@ fn cpu_times() -> Option<(u64, u64)> {
         return None;
     }
     let mut buf = vec![0u8; len];
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen, buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return None;
     }
     let longs: &[libc::c_long] = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), n) };
@@ -392,7 +392,7 @@ fn loadavg() -> [f32; 3] {
         scale: u32,
     }
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len() as libc::u_int;
+    let mut miblen = mib.len();
     let c = match std::ffi::CString::new("vm.loadavg") {
         Ok(c) => c,
         Err(_) => return [0.0; 3],
@@ -402,7 +402,7 @@ fn loadavg() -> [f32; 3] {
     }
     let mut la = LoadAvg { ldavg: [0; 3], scale: 2048 };
     let mut len = std::mem::size_of::<LoadAvg>();
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen, (&mut la as *mut LoadAvg).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, (&mut la as *mut LoadAvg).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return [0.0; 3];
     }
     let scale = if la.scale == 0 { 2048 } else { la.scale } as f32;
@@ -423,14 +423,14 @@ fn sysctl_boottime_secs() -> Option<u64> {
         usec: i64,
     }
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len() as libc::u_int;
+    let mut miblen = mib.len();
     let c = std::ffi::CString::new("kern.boottime").ok()?;
     if unsafe { libc::sysctlnametomib(c.as_ptr(), mib.as_mut_ptr(), &mut miblen) } != 0 {
         return None;
     }
     let mut tv = TimeVal { sec: 0, usec: 0 };
     let mut len = std::mem::size_of::<TimeVal>();
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen, (&mut tv as *mut TimeVal).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, (&mut tv as *mut TimeVal).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return None;
     }
     u64::try_from(tv.sec).ok()
@@ -479,7 +479,7 @@ fn memory() -> (u64, u64) {
 /// devices gives totals in 512-byte DEV_BSIZE blocks.
 fn swap() -> (u64, u64) {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len() as libc::u_int;
+    let mut miblen = mib.len();
     let c = match std::ffi::CString::new("vm.swap_info") {
         Ok(c) => c,
         Err(_) => return (0, 0),
@@ -505,7 +505,7 @@ fn swap() -> (u64, u64) {
         let mut xsw = XswDev { version: 0, flags: 0, dev: 0, nblks: 0, used: 0 };
         let mut len = std::mem::size_of::<XswDev>();
         let rc = unsafe {
-            libc::sysctl(dev_mib.as_ptr(), miblen + 1, (&mut xsw as *mut XswDev).cast(), &mut len, std::ptr::null_mut(), 0)
+            libc::sysctl(dev_mib.as_ptr(), miblen as libc::u_int + 1, (&mut xsw as *mut XswDev).cast(), &mut len, std::ptr::null_mut(), 0)
         };        if rc != 0 {
             break;
         }
@@ -749,7 +749,7 @@ fn conn_counts() -> (u32, u32) {
 
 fn inpcb_count(name: &str) -> u32 {
     let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len() as libc::u_int;
+    let mut miblen = mib.len();
     let c = match std::ffi::CString::new(name) {
         Ok(c) => c,
         Err(_) => return 0,
@@ -758,13 +758,13 @@ fn inpcb_count(name: &str) -> u32 {
         return 0;
     }
     let mut len = 0usize;
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen, std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) } != 0
+    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) } != 0
         || len < 4
     {
         return 0;
     }
     let mut buf = vec![0u8; len];
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen, buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return 0;
     }
     // The first record is a xinpgen header whose xi_len is the record size;
