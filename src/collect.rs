@@ -56,7 +56,8 @@ const SKIP_FSTYPES: &[&str] = &[
     "nfs4",
     "cifs",
     "smbfs",
-    "zfs", // handled separately below, see the note on datasets
+    // zfs is NOT here: the jail's root usually is one. ZFS datasets are summed
+    // once per pool, deduplicated in real_mount_points below.
 ];
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -392,31 +393,25 @@ fn busy_percent(prev: (u64, u64), now: (u64, u64)) -> f32 {
 }
 
 /// `vm.loadavg` is a struct loadavg {ldavg[3], scale}: three fixed-point
-/// numbers. FSCALE is 2048.0; shifting right by 8 for the integer part and
-/// masking for the fraction is what getloadavg(3) does underneath.
+/// numbers, FSCALE = 2048.0. Read by name: the MIB walk answers the same, so
+/// the shorter path is the one to keep honest.
 fn loadavg() -> [f32; 3] {
-    // struct loadavg: 3 x u32 then a u32 scale = 16 bytes.
     #[repr(C)]
     struct LoadAvg {
         ldavg: [u32; 3],
         scale: u32,
     }
-    let mut mib = [0i32; CTL_MAXNAME];
-    let mut miblen = mib.len();
     let c = match std::ffi::CString::new("vm.loadavg") {
         Ok(c) => c,
         Err(_) => return [0.0; 3],
     };
-    if unsafe { libc::sysctlnametomib(c.as_ptr(), mib.as_mut_ptr(), &mut miblen) } != 0 {
-        return [0.0; 3];
-    }
     let mut la = LoadAvg { ldavg: [0; 3], scale: 2048 };
     let mut len = std::mem::size_of::<LoadAvg>();
-    if unsafe { libc::sysctl(mib.as_ptr(), miblen as libc::u_int, (&mut la as *mut LoadAvg).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    if unsafe { libc::sysctlbyname(c.as_ptr(), (&mut la as *mut LoadAvg).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
         return [0.0; 3];
     }
     let scale = if la.scale == 0 { 2048 } else { la.scale } as f32;
-    la.ldavg.map(|v| v as f32 / scale)
+    [la.ldavg[0] as f32 / scale, la.ldavg[1] as f32 / scale, la.ldavg[2] as f32 / scale]
 }
 
 fn uptime() -> u64 {
@@ -639,7 +634,7 @@ fn raw_if_counters() -> Vec<(String, u64, u64)> {
         if unsafe { (*ifa.ifa_addr).sa_family as libc::c_int } == libc::AF_LINK {
             let name = unsafe { std::ffi::CStr::from_ptr(ifa.ifa_name) }.to_string_lossy().into_owned();
             // ifa_data points at struct if_data64 for AF_LINK records.
-            let data = unsafe { &*(ifa.ifa_data as *const IfData64) };
+            let data = unsafe { &*(ifa.ifa_data as *const IfData) };
             out.push((name, data.ibytes, data.obytes));
         }
         cursor = ifa.ifa_next;
@@ -648,31 +643,46 @@ fn raw_if_counters() -> Vec<(String, u64, u64)> {
     out
 }
 
-/// The layout of `struct if_data64` (net/if.h): u_char x 8, then 21 u64
-/// counters. Only the two we read are named; the rest are padding walked by
-/// size so the cast stays in bounds. The const assertion pins the total.
+/// The layout of `struct if_data` (net/if.h) — the struct getifaddrs(3)
+/// hangs off `ifa_data` for AF_LINK records, laid out as FreeBSD 14 defines
+/// it on amd64: a byte-and-word header, then the u64 counters, bytes at
+/// offsets 64 and 72. Named exactly as the header names them; the unions at
+/// the tail are covered by the pad so the size matches the kernel's.
 #[repr(C)]
-struct IfData64 {
-    typ: u8,
-    physical: u8,
-    addrlen: u8,
-    hdrlen: u8,
-    received: u8,
-    sent: u8,
-    oqueue: u8,
-    collisions: u8,
+struct IfData {
+    ifi_type: u8,
+    ifi_physical: u8,
+    ifi_addrlen: u8,
+    ifi_hdrlen: u8,
+    ifi_link_state: u8,
+    ifi_vhid: u8,
+    ifi_datalen: u16,
+    ifi_mtu: u32,
+    ifi_metric: u32,
+    ifi_baudrate: u64,
+    ifi_ipackets: u64,
+    ifi_ierrors: u64,
+    ifi_opackets: u64,
+    ifi_oerrors: u64,
+    ifi_collisions: u64,
     ibytes: u64,
     obytes: u64,
-    // 19 more u64 fields follow in the kernel struct (packets, errors, drops,
-    // multicasts, baudrate, epoch, hwassist, ...); they are not read.
-    rest: [u64; 19],
+    ifi_imcasts: u64,
+    ifi_omcasts: u64,
+    ifi_iqdrops: u64,
+    ifi_oqdrops: u64,
+    ifi_noproto: u64,
+    ifi_hwassist: u64,
+    // __ifi_epoch (time_t) and __ifi_lastchange (struct timeval, 16 bytes on
+    // amd64): read by nothing here, sized so the total matches.
+    tail: [u64; 3],
 }
 
 const _: () = {
-    // struct if_data64: 8 u_char + 21 u64 = 176 bytes on every FreeBSD this
-    // agent targets. A size drift would mean the cast above reads the wrong
-    // counters; the build stops instead.
-    assert!(std::mem::size_of::<IfData64>() == 176);
+    // 8 header bytes + 2 words + 15 u64 (baudrate through hwassist) + 24
+    // bytes of tail unions = 152. A drift would mean the cast in
+    // raw_if_counters reads the wrong counters; the build stops instead.
+    assert!(std::mem::size_of::<IfData>() == 152);
 };
 
 fn skip_iface(name: &str) -> bool {
@@ -949,10 +959,10 @@ mod tests {
     }
 
     #[test]
-    fn ifdata64_size_is_pinned_at_compile_time() {
-        // The const assertion above holds the layout; this test documents the
-        // number it must be and fails the build the day it drifts.
-        assert_eq!(std::mem::size_of::<IfData64>(), 176);
+    fn ifdata_size_is_pinned_at_compile_time() {
+        // The const assertion above holds the layout against FreeBSD 14's
+        // struct if_data; this test documents the number it must be.
+        assert_eq!(std::mem::size_of::<IfData>(), 152);
     }
 
     #[test]
