@@ -392,26 +392,17 @@ fn busy_percent(prev: (u64, u64), now: (u64, u64)) -> f32 {
     ((dt - di) / dt * 100.0).clamp(0.0, 100.0)
 }
 
-/// `vm.loadavg` is a struct loadavg {ldavg[3], scale}: three fixed-point
-/// numbers, FSCALE = 2048.0. Read by name: the MIB walk answers the same, so
-/// the shorter path is the one to keep honest.
+/// One, two and fifteen-minute load, from `getloadavg(3)` -- the libc
+/// wrapper that owns the `vm.loadavg` layout, whose struct grew past what a
+/// hand-written mirror assumed (24 bytes, not 16, and asking for 16 fails
+/// with ENOMEM rather than truncating).
 fn loadavg() -> [f32; 3] {
-    #[repr(C)]
-    struct LoadAvg {
-        ldavg: [u32; 3],
-        scale: u32,
-    }
-    let c = match std::ffi::CString::new("vm.loadavg") {
-        Ok(c) => c,
-        Err(_) => return [0.0; 3],
-    };
-    let mut la = LoadAvg { ldavg: [0; 3], scale: 2048 };
-    let mut len = std::mem::size_of::<LoadAvg>();
-    if unsafe { libc::sysctlbyname(c.as_ptr(), (&mut la as *mut LoadAvg).cast(), &mut len, std::ptr::null_mut(), 0) } != 0 {
+    let mut loads = [0.0f64; 3];
+    let n = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+    if n < 3 {
         return [0.0; 3];
     }
-    let scale = if la.scale == 0 { 2048 } else { la.scale } as f32;
-    [la.ldavg[0] as f32 / scale, la.ldavg[1] as f32 / scale, la.ldavg[2] as f32 / scale]
+    loads.map(|v| v as f32)
 }
 
 fn uptime() -> u64 {
