@@ -58,14 +58,24 @@ The token travels in an `Authorization: Bearer` header, never the URL.
 
 ### Keep it running without root
 
-A jail user has no init system. crontab + daemon(8) survives host reboots:
+A jail user has no init system. crontab + daemon(8) survives host reboots
+(`daemon` lives in `/usr/sbin` on FreeBSD 14):
+
+```sh
+install -d ~/bin
+cp target/release/monitor-agent-freebsd ~/bin/
+crontab -e
+# add:
+```
 
 ```
-@reboot daemon -r /home/you/bin/monitor-agent-freebsd --server https://your.hub.example --token <token>
+@reboot /usr/sbin/daemon -r /home/you/bin/monitor-agent-freebsd --server https://your.hub.example --token <token> >> /home/you/monitor-agent.log 2>&1
 ```
 
 `daemon -r` restarts the agent if it exits; the reconnect backoff in the agent
-covers hub-side outages.
+covers hub-side outages. To update a running install: rebuild, copy the new
+binary over `~/bin/monitor-agent-freebsd`, then `pkill -f monitor-agent-freebsd`
+— `daemon -r` brings it back on the new file within a second.
 
 ## Protocol
 
