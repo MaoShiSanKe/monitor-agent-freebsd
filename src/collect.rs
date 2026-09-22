@@ -607,7 +607,7 @@ fn skip_fstype(fstype: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `(name, rx bytes, tx bytes)` for every interface with data counters, from
-/// getifaddrs(3), unfiltered. FreeBSD attaches a `struct if_data64` to each
+/// getifaddrs(3), unfiltered. FreeBSD attaches a `struct if_data` to each
 /// AF_LINK address record; ifi_ibytes/ifi_obytes are the kernel's lifetime
 /// counters.
 ///
@@ -624,7 +624,7 @@ fn raw_if_counters() -> Vec<(String, u64, u64)> {
         let ifa = unsafe { &*cursor };
         if unsafe { (*ifa.ifa_addr).sa_family as libc::c_int } == libc::AF_LINK {
             let name = unsafe { std::ffi::CStr::from_ptr(ifa.ifa_name) }.to_string_lossy().into_owned();
-            // ifa_data points at struct if_data64 for AF_LINK records.
+            // ifa_data points at struct if_data for AF_LINK records.
             let data = unsafe { &*(ifa.ifa_data as *const IfData) };
             out.push((name, data.ibytes, data.obytes));
         }
