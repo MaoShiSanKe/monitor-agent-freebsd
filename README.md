@@ -78,9 +78,23 @@ crontab -e
 ```
 
 `daemon -r` restarts the agent if it exits; the reconnect backoff in the agent
-covers hub-side outages. To update a running install: rebuild, copy the new
-binary over `~/bin/monitor-agent-freebsd`, then `pkill -f monitor-agent-freebsd`
-— `daemon -r` brings it back on the new file within a second.
+covers hub-side outages. To update a running install, rebuild, then stop the
+old process **before** copying — FreeBSD refuses to overwrite a running
+binary (`Text file busy`), and `pkill -f monitor-agent-freebsd` also matches
+the `daemon` supervisor's own command line, so the supervisor dies with it
+and nothing restarts the agent:
+
+```sh
+cd ~/monitor-agent-freebsd && git pull && cargo build --release
+pkill -f bin/monitor-agent
+cp target/release/monitor-agent-freebsd ~/bin/
+# the supervisor died with the pkill above; start it again the crontab way
+/usr/sbin/daemon -r /home/you/bin/monitor-agent-freebsd --server https://your.hub.example --token <token> >> /home/you/monitor-agent.log 2>&1 &
+```
+
+Alternatively, write the new binary to a temp name, swap with `mv` (rename
+is allowed on a running binary), and let the surviving supervisor restart
+the agent itself.
 
 ## Protocol
 
