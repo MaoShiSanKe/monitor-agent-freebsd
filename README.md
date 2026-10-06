@@ -4,7 +4,10 @@ FreeBSD monitoring agent for the [monitor](https://github.com/monitor-probe/moni
 A port of the official [monitor-probe/agent](https://github.com/monitor-probe/agent)
 (Linux) — the WebSocket protocol layer is carried over from it (MIT), and the
 collection layer is rewritten against the FreeBSD kernel: sysctl(3/8),
-getfsstat(2), getifaddrs(3).
+getfsstat(2), getifaddrs(3). The agent itself runs on any FreeBSD 12+ host,
+root or not; it was built and first deployed in the most restricted setting
+there is — a serv00 FreeBSD 14 jail without root — so less constrained hosts
+just work.
 
 ## Why
 
@@ -55,6 +58,8 @@ the supported path.
 
 Options: `--interval <secs>` (default 1), `--iface <list>`, `--insecure`.
 The token travels in an `Authorization: Bearer` header, never the URL.
+A baseline reading is taken one second after connecting, so the first
+report already measures real CPU and network instead of reporting zeros.
 
 ### Keep it running without root
 
